@@ -36,7 +36,7 @@
       </div>
       
       <button @click="startSimulation">Старт</button>
-      <button @click="pauseSimulation">{{ isPaused ? 'Продолжить' : 'Пауза' }}</button>
+      <button @click="pauseSimulation" :disabled="!simulationRunning">{{ isPaused ? 'Продолжить' : 'Пауза' }}</button>
       <button @click="resetSimulation">Сброс</button>
     </div>
     
@@ -45,6 +45,11 @@
       <p>Травоядные: {{ currentHerbivores }}</p>
       <p>Хищники: {{ currentPredators }}</p>
       <p>Трава: {{ Math.round(currentGrass) }}/{{ maxGrass }}</p>
+      <p class="color-info">Обозначения цветов: 
+        <span style="color: #3498db;">синим</span> - травоядные, 
+        <span style="color: #e74c3c;">красным</span> - хищники, 
+        <span style="color: #4CAF50;">зелёным</span> - трава
+      </p>
     </div>
     
     <div class="ecosystem" ref="ecosystem">
@@ -113,27 +118,49 @@ class Herbivore {
     this.y = y;
     this.energy = 100;
     this.direction = Math.random() * Math.PI * 2;
-    this.speed = 1 + Math.random();
+    this.baseSpeed = 1.5 + Math.random(); // Базовая скорость
+    this.hungerSpeedMultiplier = 1.5; // +50% скорости при голоде
+    this.currentSpeed = this.baseSpeed;
     this.reproductionCooldown = 0;
+    this.hungerThreshold = 40; // Порог энергии для активации "режима голода"
   }
 
-  move(width, height) {
-    // Периодически меняем направление
-    if (Math.random() < 0.05) {
+  updateSpeed() {
+    // Ускоряемся, если энергия <= порога
+    this.currentSpeed = this.energy <= this.hungerThreshold 
+      ? this.baseSpeed * this.hungerSpeedMultiplier 
+      : this.baseSpeed;
+  }
+
+  move(width, height, grassPatches) {
+    this.updateSpeed(); // Обновляем скорость перед движением
+
+    // Поиск травы при голоде
+    if (this.energy <= this.hungerThreshold) {
+      const nearestGrass = this.findNearestGrass(grassPatches);
+      if (nearestGrass) {
+        this.direction = Math.atan2(
+          nearestGrass.y - this.y, 
+          nearestGrass.x - this.x
+        );
+      }
+    } 
+    // Случайное направление в обычном режиме
+    else if (Math.random() < 0.05) {
       this.direction = Math.random() * Math.PI * 2;
     }
-    
-    this.x += Math.cos(this.direction) * this.speed;
-    this.y += Math.sin(this.direction) * this.speed;
-    
-    // Ограничиваем движение в пределах экосистемы
+
+    // Движение с текущей скоростью
+    this.x += Math.cos(this.direction) * this.currentSpeed;
+    this.y += Math.sin(this.direction) * this.currentSpeed;
+
+    // Границы экосистемы
     this.x = Math.max(0, Math.min(width, this.x));
     this.y = Math.max(0, Math.min(height, this.y));
-    
-    // Тратим энергию на движение
-    this.energy -= 0.05;
-    
-    // Уменьшаем кулдаун размножения
+
+    // Затраты энергии (больше при ускорении)
+    this.energy -= this.currentSpeed > this.baseSpeed ? 0.13 : 0.1;
+
     if (this.reproductionCooldown > 0) {
       this.reproductionCooldown--;
     }
@@ -141,30 +168,46 @@ class Herbivore {
 
   eat(grassPatches) {
     const eatingRadius = 20; // Радиус, в котором травоядное может есть траву
-    //let eatenAmount = 0;
-    
+  
     // Ищем ближайший участок травы
     for (const patch of grassPatches) {
-      if (patch.amount <= 0) continue; // Пропускаем пустые участки
+      if (!patch.hasGrass()) continue; // Пропускаем пустые участки
+    
+      const distance = Math.sqrt(
+        Math.pow(this.x - patch.x, 2) + 
+        Math.pow(this.y - patch.y, 2)
+      );
+    
+      // Если участок травы в радиусе поедания
+      if (distance < eatingRadius) {
+        const canEat = Math.min(2, patch.amount); // Может съесть до 2 единиц за раз
+        patch.loseAmount(canEat);
+        this.energy += canEat * 0.5;
+      
+        // Если съели достаточно, прекращаем поиск
+        if (canEat >= 2) break;
+      }
+    }
+  }
+
+  findNearestGrass(grassPatches) {
+    let nearestPatch = null;
+    let minDistance = Infinity;
+
+    for (const patch of grassPatches) {
+      if (patch.amount <= 0) continue;
       
       const distance = Math.sqrt(
         Math.pow(this.x - patch.x, 2) + 
         Math.pow(this.y - patch.y, 2)
       );
       
-      // Если участок травы в радиусе поедания
-      if (distance < eatingRadius) {
-        const canEat = Math.min(2, patch.amount); // Может съесть до 2 единиц за раз
-        patch.amount -= canEat;
-        this.energy += canEat * 0.5;
-        //eatenAmount += canEat;
-        
-        // Если съели достаточно, прекращаем поиск
-        if (canEat >= 2) break;
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestPatch = patch;
       }
     }
-    
-    //return eatenAmount;
+    return nearestPatch;
   }
 
   canReproduce() {
@@ -172,9 +215,17 @@ class Herbivore {
   }
 
   reproduce() {
-    this.energy /= 2;
+    const childEnergy = this.energy * 0.5; // Дитё получает 50% энергии родителя
+    this.energy *= 0.6; // Родитель сохраняет 50%
     this.reproductionCooldown = 50;
-    return new Herbivore(this.x + (Math.random() * 20 - 10), this.y + (Math.random() * 20 - 10));
+
+    const child = new Herbivore(
+      this.x + (Math.random() * 20 - 10),
+      this.y + (Math.random() * 20 - 10)
+    );
+
+    child.energy = childEnergy; // Явно задаём энергию потомку
+    return child;
   }
 }
 
@@ -185,7 +236,7 @@ class Predator {
     this.energy = 100;
     this.direction = Math.random() * Math.PI * 2;
     this.baseSpeed = 2 + Math.random(); // Базовая скорость
-    this.huntSpeed = this.baseSpeed * 3; // Скорость в режиме охоты
+    this.huntSpeed = this.baseSpeed * 2.5; // Скорость в режиме охоты
     this.currentSpeed = this.baseSpeed;
     this.target = null; // Цель для охоты
     this.reproductionCooldown = 0;
@@ -231,7 +282,7 @@ class Predator {
     this.y = Math.max(0, Math.min(height, this.y));
     
     // Тратим энергию на движение (больше в режиме охоты)
-    this.energy -= this.currentSpeed === this.huntSpeed ? 0.2 : 0.05;
+    this.energy -= this.currentSpeed === this.huntSpeed ? 0.3 : 0.15;
     
     // Уменьшаем кулдауны
     if (this.reproductionCooldown > 0) this.reproductionCooldown--;
@@ -268,13 +319,47 @@ class Predator {
   }
 
   canReproduce() {
-    return this.energy > 100 && this.reproductionCooldown === 0;
+    return this.energy > 99 && this.reproductionCooldown === 0;
   }
 
   reproduce() {
-    this.energy /= 2;
-    this.reproductionCooldown = 50;
-    return new Predator(this.x + (Math.random() * 20 - 10), this.y + (Math.random() * 20 - 10));
+    const childEnergy = this.energy * 0.5;
+    this.energy *= 0.6;
+    this.reproductionCooldown = 70;
+
+    const child = new Predator(
+      this.x + (Math.random() * 20 - 10),
+      this.y + (Math.random() * 20 - 10)
+    );
+    child.energy = childEnergy;
+    return child;
+  }
+}
+
+class Grass {
+  constructor(x, y, amount, size) {
+    this.x = x;
+    this.y = y;
+    this.amount = amount;
+    this.size = size;
+    this.maxAmount = 10; // Максимальное количество травы на участке
+  }
+
+  // Рост травы
+  grow(growthRate) {
+    this.amount = Math.min(this.maxAmount, this.amount + growthRate * 0.3);
+    return this.amount;
+  }
+
+  // Потеря травы при поедании
+  loseAmount(value) {
+    this.amount = Math.max(0, this.amount - value);
+    return this.amount;
+  }
+
+  // Проверка, есть ли трава на участке
+  hasGrass() {
+    return this.amount > 0;
   }
 }
 
@@ -287,16 +372,17 @@ export default {
       grassPatches: [], // Массив участков травы
       grassPatchSize: 20, // Размер участка травы
       maxGrassPatches: 30, // Максимальное количество участков
-      grassGrowthRate: 3, // Скорость роста травы (1-7 единиц/3 дня)
+      grassGrowthRate: 3, // Скорость роста травы по умолчанию
       minGrassGrowth: 1,  // Минимальный рост
       maxGrassGrowth: 7,  // Максимальный рост
       huntFrequency: 5,
-      simulationSpeed: 1, // Новая переменная для контроля скорости (1x по умолчанию)
+      simulationSpeed: 1, // Переменная для контроля скорости по умолчанию
       minSpeed: 0.5,      // Минимальная скорость (0.5x)
       maxSpeed: 5,        // Максимальная скорость (5x)
-      baseInterval: 900,  // Базовый интервал (1000ms для 1x скорости)
+      baseInterval: 900,  // Базовый интервал (900ms для 1x скорости)
       simulationEnded: false, // Флаг завершения симуляции
       alertTimeout: null,     // Таймер для alert
+      simulationRunning: false, // Флаг, указывающий, что симуляция запущена
       
       // Состояние симуляции
       herbivores: [],
@@ -348,6 +434,7 @@ export default {
     startSimulation() {
       this.resetSimulation();
       this.isPaused = false;
+      this.simulationRunning = true; // Симуляция запущена
       
       if (this.simulationInterval) {
         clearInterval(this.simulationInterval);
@@ -363,17 +450,24 @@ export default {
     },
 
     updateSimulationSpeed() {
-      if (!this.isPaused && this.simulationInterval) {
+      if (this.simulationInterval) {
+        const wasPaused = this.isPaused; // Сохраняем состояние паузы
         clearInterval(this.simulationInterval);
         const interval = this.baseInterval / this.simulationSpeed;
+    
         this.simulationInterval = setInterval(() => {
-          this.simulateDay();
+          if (!this.isPaused) {
+            this.simulateDay();
+          }
         }, interval);
+    
+        this.isPaused = wasPaused; // Восстанавливаем состояние паузы
       }
     },
     
     pauseSimulation() {
-      this.isPaused = !this.isPaused;
+      if (this.simulationRunning) // Только если симуляция запущена
+        this.isPaused = !this.isPaused;
     },
     
     resetSimulation() {
@@ -381,6 +475,8 @@ export default {
       clearInterval(this.simulationInterval);
       clearTimeout(this.alertTimeout); // Очищаем таймер
       this.simulationEnded = false;    // Сбрасываем флаг
+      this.simulationRunning = false; // Симуляция остановлена
+      this.isPaused = true;
       
       // Создаем новых травоядных
       this.herbivores = [];
@@ -407,7 +503,7 @@ export default {
 
       // Инициализируем участки травы
       this.grassPatches = [];
-      this.generateGrassPatches(5); // Начальное количество участков
+      this.generateGrassPatches(6); // Начальное количество участков
     },
 
     generateGrassPatches(count) {
@@ -420,17 +516,17 @@ export default {
       if (this.grassPatches.length < this.maxGrassPatches) {
         const totalGrass = this.grassPatches.reduce((sum, patch) => sum + patch.amount, 0);
         const availableSpace = Math.max(0, this.maxGrass - totalGrass);
-      
+  
         if (availableSpace > 0) {
           const newAmount = Math.min(5 + Math.random() * 5, availableSpace);
           if (newAmount > 0) {
-            this.grassPatches.push({
-             x: Math.random() * this.ecosystemWidth,
-              y: Math.random() * this.ecosystemHeight,
-              amount: newAmount,
-             size: 15 + Math.random() * 10
-            });
-          }
+            this.grassPatches.push(new Grass(
+              Math.random() * this.ecosystemWidth,
+              Math.random() * this.ecosystemHeight,
+              newAmount,
+              15 + Math.random() * 10
+            ));
+         }
         }
       }
     },
@@ -443,9 +539,9 @@ export default {
       if (this.day % 3 === 0 && this.grassPatches.length < this.maxGrassPatches && this.currentGrass < this.maxGrass) {
         // Увеличиваем количество травы на всех участках
         this.grassPatches.forEach(patch => {
-          patch.amount = Math.min(10, patch.amount + this.grassGrowthRate * 0.3);
+          patch.grow(this.grassGrowthRate);
         });
-    
+
         // Иногда добавляем новые участки
         if (Math.random() < 0.3 && this.grassPatches.length < this.maxGrassPatches) {
           this.addGrassPatch();
@@ -472,16 +568,15 @@ export default {
       }
       
       // Движение и питание травоядных
-      //let totalEaten = 0;
       const newHerbivores = [];
       
       for (const herbivore of this.herbivores) {
         if (herbivore.energy > 0) {
-          if (this.day > 30 && Math.random() < 0.05) {
+          if (this.day > 30 && Math.random() < 0.04) {
             herbivore.energy = 0;
             continue;
           }
-          herbivore.move(this.ecosystemWidth, this.ecosystemHeight);
+          herbivore.move(this.ecosystemWidth, this.ecosystemHeight, this.grassPatches);
           
           // Травоядные едят траву только если находятся рядом с ней
           herbivore.eat(this.grassPatches);
@@ -507,7 +602,7 @@ export default {
       for (const predator of this.predators) {
         if (predator.energy > 0) {
           // Смерть от старости
-          if (this.day > 30 && Math.random() < 0.03) {
+          if (this.day > 30 && Math.random() < 0.04) {
           predator.energy = 0;
           continue;
           } 
@@ -557,7 +652,7 @@ export default {
             }
           }
           // Размножение
-          if (this.day % 6 === 0 && predator.canReproduce()) {
+          if (this.day % 10 === 0 && predator.canReproduce()) {
             newPredators.push(predator.reproduce());
           }
           
@@ -574,6 +669,7 @@ export default {
       // Если вымерли все травоядные или хищники, перезапускаем симуляцию
       if ((this.currentHerbivores === 0 || this.currentPredators === 0) && !this.simulationEnded) {
         this.simulationEnded = true;
+        this.simulationRunning = false; // Симуляция завершена
         clearTimeout(this.alertTimeout); // Очищаем предыдущий таймер
         this.alertTimeout = setTimeout(() => {
           alert(`Симуляция завершена на день ${this.day}. ${this.currentHerbivores === 0 ? 'Вымерли травоядные' : 'Вымерли хищники'}`);
@@ -627,6 +723,15 @@ button:hover {
   background: #45a049;
 }
 
+button:disabled {
+  background: #cccccc;
+  cursor: not-allowed;
+}
+
+button:disabled:hover {
+  background: #cccccc;
+}
+
 .stats {
   background: #e9f7ef;
   padding: 10px;
@@ -637,6 +742,12 @@ button:hover {
 .stats p {
   margin: 5px 0;
   font-weight: bold;
+}
+
+.color-info {
+  font-size: 0.9em;
+  color: #555;
+  margin-top: 8px;
 }
 
 .ecosystem {
