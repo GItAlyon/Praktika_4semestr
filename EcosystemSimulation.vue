@@ -1,8 +1,11 @@
 <template>
+  <!-- Главный контейнер приложения -->
   <div class="ecosystem-container">
     <h1>Симуляция экосистемы</h1>
     
+    <!-- Панель управления с настройками -->
     <div class="controls">
+      <!-- Контролы для настройки параметров симуляции -->
       <div class="control-group">
         <label>Количество травоядных: {{ herbivoreCount }}</label>
         <input type="range" v-model="herbivoreCount" min="1" max="20">
@@ -34,12 +37,13 @@
           @change="updateSimulationSpeed"
         >
       </div>
-      
+      <!-- Кнопки управления симуляцией -->
       <button @click="startSimulation">Старт</button>
       <button @click="pauseSimulation" :disabled="!simulationRunning">{{ isPaused ? 'Продолжить' : 'Пауза' }}</button>
       <button @click="resetSimulation">Сброс</button>
     </div>
-    
+
+    <!-- Блок с текущей статистикой -->
     <div class="stats">
       <p>День: {{ day }}</p>
       <p>Травоядные: {{ currentHerbivores }}</p>
@@ -52,6 +56,7 @@
       </p>
     </div>
     
+    <!-- Контейнер для визуализации экосистемы -->
     <div class="ecosystem" ref="ecosystem">
       <!-- Участки травы -->
       <div 
@@ -67,6 +72,7 @@
         }"
       ></div>
 
+      <!-- Травоядные существа -->
       <div 
         v-for="(herbivore, index) in herbivores" 
         :key="'herbivore'+index"
@@ -78,6 +84,7 @@
         }"
       ></div>
       
+      <!-- Хищники -->
       <div 
         v-for="(predator, index) in predators" 
         :key="'predator'+index"
@@ -89,6 +96,7 @@
         }"
       ></div>
 
+      <!-- Дополнительный рендеринг травоядных для эффекта смерти -->
       <div 
         v-for="(herbivore, index) in herbivores" 
         :key="'herbivore'+index"
@@ -101,6 +109,7 @@
         }"
       ></div>
       
+      <!-- Индикатор количества травы -->
       <div 
         class="grass-indicator"
         :style="{
@@ -112,26 +121,28 @@
 </template>
 
 <script>
+// Класс травоядного существа
 class Herbivore {
   constructor(x, y) {
-    this.x = x;
-    this.y = y;
-    this.energy = 100;
-    this.direction = Math.random() * Math.PI * 2;
+    this.x = x; // Позиция по X
+    this.y = y; // Позиция по Y
+    this.energy = 100; // Уровень энергии
+    this.direction = Math.random() * Math.PI * 2; // Направление движения (в радианах)
     this.baseSpeed = 1.5 + Math.random(); // Базовая скорость
-    this.hungerSpeedMultiplier = 1.5; // +50% скорости при голоде
-    this.currentSpeed = this.baseSpeed;
-    this.reproductionCooldown = 0;
+    this.hungerSpeed = 1.5; // Множитель скорости при голоде
+    this.currentSpeed = this.baseSpeed; // Текущая скорость
+    this.reproductionCooldown = 0; // Таймер до следующего размножения
     this.hungerThreshold = 40; // Порог энергии для активации "режима голода"
   }
 
+  // Обновление скорости в зависимости от уровня энергии
   updateSpeed() {
-    // Ускоряемся, если энергия <= порога
     this.currentSpeed = this.energy <= this.hungerThreshold 
-      ? this.baseSpeed * this.hungerSpeedMultiplier 
+      ? this.baseSpeed * this.hungerSpeed
       : this.baseSpeed;
   }
 
+  // Метод движения животного
   move(width, height, grassPatches) {
     this.updateSpeed(); // Обновляем скорость перед движением
 
@@ -154,18 +165,20 @@ class Herbivore {
     this.x += Math.cos(this.direction) * this.currentSpeed;
     this.y += Math.sin(this.direction) * this.currentSpeed;
 
-    // Границы экосистемы
+    // Проверка границ экосистемы
     this.x = Math.max(0, Math.min(width, this.x));
     this.y = Math.max(0, Math.min(height, this.y));
 
     // Затраты энергии (больше при ускорении)
     this.energy -= this.currentSpeed > this.baseSpeed ? 0.13 : 0.1;
 
+    // Обновление таймера размножения
     if (this.reproductionCooldown > 0) {
       this.reproductionCooldown--;
     }
   }
 
+  // Метод поедания травы
   eat(grassPatches) {
     const eatingRadius = 20; // Радиус, в котором травоядное может есть траву
   
@@ -190,6 +203,7 @@ class Herbivore {
     }
   }
 
+  // Поиск ближайшего участка травы
   findNearestGrass(grassPatches) {
     let nearestPatch = null;
     let minDistance = Infinity;
@@ -210,13 +224,15 @@ class Herbivore {
     return nearestPatch;
   }
 
+  // Проверка возможности размножения
   canReproduce() {
     return this.energy > 80 && this.reproductionCooldown === 0;
   }
 
+  // Метод размножения
   reproduce() {
     const childEnergy = this.energy * 0.5; // Дитё получает 50% энергии родителя
-    this.energy *= 0.6; // Родитель сохраняет 50%
+    this.energy *= 0.6; // Родитель сохраняет 60%
     this.reproductionCooldown = 50;
 
     const child = new Herbivore(
@@ -229,6 +245,7 @@ class Herbivore {
   }
 }
 
+// Класс хищника
 class Predator {
   constructor(x, y) {
     this.x = x;
@@ -240,10 +257,12 @@ class Predator {
     this.currentSpeed = this.baseSpeed;
     this.target = null; // Цель для охоты
     this.reproductionCooldown = 0;
-    this.huntCooldown = 0;
+    this.huntCooldown = 0; // Таймер для охоты
   }
 
+  // Метод движения хищника
   move(width, height) {
+    // Режим преследования цели
     // Если есть цель и она еще жива
     if (this.target && this.target.energy > 0) {
       const distance = Math.sqrt(
@@ -284,15 +303,17 @@ class Predator {
     // Тратим энергию на движение (больше в режиме охоты)
     this.energy -= this.currentSpeed === this.huntSpeed ? 0.3 : 0.15;
     
-    // Уменьшаем кулдауны
+    // Обновление таймеров
     if (this.reproductionCooldown > 0) this.reproductionCooldown--;
     if (this.huntCooldown > 0) this.huntCooldown--;
   }
 
+  // Проверка возможности охоты
   canHunt(huntFrequency) {
     return this.huntCooldown === 0 && Math.random() < huntFrequency * 0.03;
   }
 
+  // Метод охоты
   hunt(herbivores) {
     let closest = null;
     let minDist = Infinity;
@@ -318,10 +339,12 @@ class Predator {
     return false;
   }
 
+  // Проверка возможности размножения
   canReproduce() {
     return this.energy > 99 && this.reproductionCooldown === 0;
   }
 
+  // Метод размножения
   reproduce() {
     const childEnergy = this.energy * 0.5;
     this.energy *= 0.6;
@@ -336,12 +359,13 @@ class Predator {
   }
 }
 
+// Класс участка травы
 class Grass {
   constructor(x, y, amount, size) {
     this.x = x;
     this.y = y;
-    this.amount = amount;
-    this.size = size;
+    this.amount = amount; // КОличество травы на участке
+    this.size = size;  // Размер участка травы
     this.maxAmount = 10; // Максимальное количество травы на участке
   }
 
@@ -366,7 +390,7 @@ class Grass {
 export default {
   data() {
     return {
-      // Параметры
+      // Параметры симуляции
       herbivoreCount: 7,
       predatorCount: 7,
       grassPatches: [], // Массив участков травы
@@ -398,12 +422,14 @@ export default {
   },
   
   computed: {
+    // Форматированные значения для отображения
     formattedGrassRate() {
     return Number(this.grassGrowthRate).toFixed(1);
     },
     grassPercentage() {
       return (this.currentGrass / this.maxGrass) * 100;
     },
+    // Текущее количество живых существ
     currentHerbivores() {
       return this.herbivores.filter(h => h.energy > 0).length;
     },
@@ -411,7 +437,8 @@ export default {
       return this.predators.filter(p => p.energy > 0).length;
     }
   },
-  
+
+  // Хуки жизненного цикла
   mounted() {
     this.resetSimulation();
     this.updateEcosystemSize();
@@ -424,6 +451,7 @@ export default {
   },
   
   methods: {
+    // Обновление размеров экосистемы при изменении окна
     updateEcosystemSize() {
       if (this.$refs.ecosystem) {
         this.ecosystemWidth = this.$refs.ecosystem.clientWidth;
@@ -431,6 +459,7 @@ export default {
       }
     },
     
+    // Запуск симуляции
     startSimulation() {
       this.resetSimulation();
       this.isPaused = false;
@@ -449,6 +478,7 @@ export default {
       }, interval);
     },
 
+    // Обновление скорости симуляции
     updateSimulationSpeed() {
       if (this.simulationInterval) {
         const wasPaused = this.isPaused; // Сохраняем состояние паузы
@@ -465,11 +495,13 @@ export default {
       }
     },
     
+    // Пауза/продолжение симуляции
     pauseSimulation() {
       if (this.simulationRunning) // Только если симуляция запущена
         this.isPaused = !this.isPaused;
     },
     
+    // Сброс симуляции
     resetSimulation() {
       // Очищаем предыдущую симуляцию
       clearInterval(this.simulationInterval);
@@ -506,12 +538,14 @@ export default {
       this.generateGrassPatches(6); // Начальное количество участков
     },
 
+    // Генерация начальных участков травы
     generateGrassPatches(count) {
       for (let i = 0; i < count; i++) {
         this.addGrassPatch();
       }
     },
 
+    // Добавление нового участка травы
     addGrassPatch() {
       if (this.grassPatches.length < this.maxGrassPatches) {
         const totalGrass = this.grassPatches.reduce((sum, patch) => sum + patch.amount, 0);
@@ -531,6 +565,7 @@ export default {
       }
     },
     
+    // Основной метод симуляции одного дня
     simulateDay() {
       if (this.simulationEnded) return; // Прекращаем если симуляция уже завершена
       this.day++;
@@ -554,6 +589,7 @@ export default {
         this.grassPatches.reduce((sum, patch) => sum + patch.amount, 0)
       );
 
+      // Проверка нехватки травы
       const grassPerHerbivore = 2; // Необходимо 2 ед. травы на одно травоядное
       if (this.currentGrass < this.currentHerbivores * grassPerHerbivore) {
         const deficit = (this.currentHerbivores * grassPerHerbivore) - this.currentGrass;
@@ -601,7 +637,7 @@ export default {
       
       for (const predator of this.predators) {
         if (predator.energy > 0) {
-          // Смерть от старости
+          // Смерть от старости или болезни
           if (this.day > 30 && Math.random() < 0.04) {
           predator.energy = 0;
           continue;
@@ -647,7 +683,7 @@ export default {
             if (distToTarget < 15) { // Радиус атаки
               predator.target.energy = 0;
               predator.energy += 30;
-              predator.huntCooldown = 15; // Долгий кулдаун после удачной охоты
+              predator.huntCooldown = 15; // Кулдаун после удачной охоты
               predator.target = null; // Сбрасываем цель
             }
           }
@@ -682,12 +718,14 @@ export default {
 </script>
 
 <style scoped>
+/* Основные стили контейнера */
 .ecosystem-container {
   max-width: 800px;
   margin: 0 auto;
   font-family: Arial, sans-serif;
 }
 
+/* Стили панели управления */
 .controls {
   background: #f0f0f0;
   padding: 15px;
@@ -709,6 +747,7 @@ export default {
   width: 100%;
 }
 
+/* Стили кнопок */
 button {
   margin-right: 10px;
   padding: 5px 10px;
@@ -732,6 +771,7 @@ button:disabled:hover {
   background: #cccccc;
 }
 
+/* Стили блока статистики */
 .stats {
   background: #e9f7ef;
   padding: 10px;
@@ -750,6 +790,7 @@ button:disabled:hover {
   margin-top: 8px;
 }
 
+/* Стили области экосистемы */
 .ecosystem {
   position: relative;
   width: 100%;
@@ -760,6 +801,7 @@ button:disabled:hover {
   overflow: hidden;
 }
 
+/* Базовые стили существ */
 .entity {
   position: absolute;
   width: 15px;
@@ -768,6 +810,7 @@ button:disabled:hover {
   transform: translate(-50%, -50%);
 }
 
+/* Цвета для разных типов существ */
 .herbivore {
   background-color: #3498db;
 }
@@ -776,6 +819,7 @@ button:disabled:hover {
   background-color: #e74c3c;
 }
 
+/* Стили участков травы */
 .grass-patch {
   position: absolute;
   background-color: #4CAF50;
